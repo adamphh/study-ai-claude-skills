@@ -1,6 +1,6 @@
 /**
  * Data Fetcher Module
- * Fetches real-time candle history for VN Stocks (via TCBS API) and Crypto assets (via Binance API).
+ * Fetches real-time candle history for VN Stocks (via Entrade API) and Crypto assets (via Binance API).
  */
 
 const https = require('https');
@@ -53,8 +53,8 @@ async function fetchCryptoCandles(symbol, interval = '1d', limit = 100) {
 }
 
 /**
- * Fetches Vietnam Stock candles from TCBS Public API
- * @param {string} symbol - e.g., 'SSI', 'MSN', 'HPG', 'FPT'
+ * Fetches Vietnam Stock candles from Entrade API (High reliability & real-time)
+ * @param {string} symbol - e.g., 'SSI', 'MSN', 'HPG', 'FPT', 'VND'
  * @returns {Promise<Array<{date: string, open: number, high: number, low: number, close: number, volume: number}>>}
  */
 async function fetchVNStockCandles(symbol) {
@@ -62,23 +62,28 @@ async function fetchVNStockCandles(symbol) {
   const toSec = Math.floor(Date.now() / 1000);
   const fromSec = toSec - 180 * 86400; // 180 days lookback
 
-  const url = `https://apipub.tcbs.com.vn/stock-insight/v1/stock/bars-long-term?ticker=${ticker}&type=stock&resolution=D&from=${fromSec}&to=${toSec}`;
+  const url = `https://services.entrade.com.vn/chart-api/v2/ohlcs/stock?resolution=1D&symbol=${ticker}&from=${fromSec}&to=${toSec}`;
   const jsonStr = await fetchUrl(url);
   const json = JSON.parse(jsonStr);
 
-  if (!json.data || !Array.isArray(json.data) || json.data.length === 0) {
-    throw new Error(`No data returned from TCBS API for ticker ${ticker}`);
+  if (!json || !json.t || !Array.isArray(json.t) || json.t.length === 0) {
+    throw new Error(`No candle data returned for ticker ${ticker}`);
   }
 
-  // Map and sort candles chronologically
-  const candles = json.data.map(item => ({
-    date: item.tradingDate ? item.tradingDate.split('T')[0] : '',
-    open: item.open * 1000,
-    high: item.high * 1000,
-    low: item.low * 1000,
-    close: item.close * 1000,
-    volume: item.volume
-  })).sort((a, b) => new Date(a.date) - new Date(b.date));
+  const candles = [];
+  for (let i = 0; i < json.t.length; i++) {
+    if (json.c[i] !== null && json.c[i] !== undefined) {
+      const multiplier = json.c[i] < 1000 ? 1000 : 1;
+      candles.push({
+        date: new Date(json.t[i] * 1000).toISOString().split('T')[0],
+        open: json.o[i] * multiplier,
+        high: json.h[i] * multiplier,
+        low: json.l[i] * multiplier,
+        close: json.c[i] * multiplier,
+        volume: json.v[i]
+      });
+    }
+  }
 
   return candles;
 }
@@ -100,10 +105,12 @@ function generateMockCandles(symbol, count = 100) {
     basePrice = 23250;
   } else if (cleanSym === 'MSN') {
     basePrice = 66300;
+  } else if (cleanSym === 'VND') {
+    basePrice = 16400;
   } else if (cleanSym === 'HPG') {
-    basePrice = 27500;
+    basePrice = 21650;
   } else if (cleanSym === 'FPT') {
-    basePrice = 125000;
+    basePrice = 65100;
   }
 
   let baseVol = isCrypto ? 50000 : 12000000;
@@ -136,7 +143,7 @@ function generateMockCandles(symbol, count = 100) {
 }
 
 /**
- * Smart fetcher that attempts live APIs (TCBS for VN stocks, Binance for Crypto)
+ * Smart fetcher that attempts live APIs (Entrade for VN stocks, Binance for Crypto)
  * @param {string} symbol
  * @returns {Promise<{candles: Array, isMock: boolean}>}
  */
@@ -153,7 +160,7 @@ async function fetchCandles(symbol) {
     }
   }
 
-  // 2. VN Stock via TCBS API
+  // 2. VN Stock via Entrade API
   try {
     const candles = await fetchVNStockCandles(symUpper);
     if (candles && candles.length >= 20) {
@@ -163,7 +170,7 @@ async function fetchCandles(symbol) {
     // Fallback
   }
 
-  // 3. Fallback to updated mock data
+  // 3. Fallback to mock data
   return { candles: generateMockCandles(symUpper), isMock: true };
 }
 
